@@ -1,5 +1,6 @@
 from typing import Callable, List, Tuple
 
+import math
 import pytest
 from hypothesis import given
 from hypothesis.strategies import lists
@@ -9,10 +10,13 @@ from minitorch.operators import (
     add,
     addLists,
     eq,
+    exp,
     id,
     inv,
     inv_back,
+    is_close,
     log_back,
+    log,
     lt,
     max,
     mul,
@@ -22,30 +26,51 @@ from minitorch.operators import (
     relu,
     relu_back,
     sigmoid,
-    sum,
+    sum as sum0,
 )
 
-from .strategies import assert_close, small_floats
-
+from .strategies import assert_close, ordered_triplets
+from .strategies import small_floats, posi_floats
 # ## Task 0.1 Basic hypothesis tests.
 
 
 @pytest.mark.task0_1
 @given(small_floats, small_floats)
 def test_same_as_python(x: float, y: float) -> None:
-    "Check that the main operators all return the same value of the python version"
+    """Check that the main operators all return the same value of the python version"""
     assert_close(mul(x, y), x * y)
     assert_close(add(x, y), x + y)
     assert_close(neg(x), -x)
     assert_close(max(x, y), x if x > y else y)
-    if abs(x) > 1e-5:
+    if abs(x) > 1e-5:  # x != 0
         assert_close(inv(x), 1.0 / x)
+
+
+@pytest.mark.task0_1
+@given(small_floats, small_floats)
+def test_exp(a: float, b: float) -> None:
+    assert exp(0) == 1.0
+    assert exp(a) > 0.0
+    assert_close(exp(a), math.exp(a))
+
+
+@pytest.mark.task0_1
+@given(posi_floats, posi_floats)
+def test_log(a: float, b: float) -> None:
+    # special point
+    assert log(1.0) == 0.0
+    assert log(math.e) == 1.0
+    # `log` property
+    assert_close(log(a**2), 2 * log(a))
+    assert_close(log(a * b), log(a) + log(b))
+    # general testing
+    assert_close(log(a), math.log(a))
 
 
 @pytest.mark.task0_1
 @given(small_floats)
 def test_relu(a: float) -> None:
-    if a > 0:
+    if a >= 0:
         assert relu(a) == a
     if a < 0:
         assert relu(a) == 0.0
@@ -54,10 +79,23 @@ def test_relu(a: float) -> None:
 @pytest.mark.task0_1
 @given(small_floats, small_floats)
 def test_relu_back(a: float, b: float) -> None:
-    if a > 0:
+    if a >= 0:
         assert relu_back(a, b) == b
     if a < 0:
         assert relu_back(a, b) == 0.0
+
+
+@pytest.mark.task0_1
+@given(posi_floats, small_floats)
+def test_log_back(a: float, b: float) -> None:
+    assert_close(log_back(a, b), (1 / a) * b)
+
+
+@pytest.mark.task0_1
+@given(small_floats, small_floats)
+def test_inv_back(a: float, b: float) -> None:
+    if abs(a) > 1e-5:
+        assert_close(inv_back(a, b), (-b) / (a**2))
 
 
 @pytest.mark.task0_1
@@ -69,9 +107,10 @@ def test_id(a: float) -> None:
 @pytest.mark.task0_1
 @given(small_floats)
 def test_lt(a: float) -> None:
-    "Check that a - 1.0 is always less than a"
+    """Check that a - 1.0 is always less than a"""
     assert lt(a - 1.0, a) == 1.0
     assert lt(a, a - 1.0) == 0.0
+    assert lt(a, a) == 0.0
 
 
 @pytest.mark.task0_1
@@ -107,40 +146,57 @@ def test_sigmoid(a: float) -> None:
     * It crosses 0 at 0.5
     * It is  strictly increasing.
     """
-    raise NotImplementedError("Need to include this file from past assignment.")
+    assert sigmoid(a) >= 0 and sigmoid(a) <= 1
+    assert_close(1 - sigmoid(a), sigmoid(-a))
+    assert sigmoid(0) == 0.5
+    epsilon = 1e-2
+    # test monotonicity
+    assert sigmoid(a) <= sigmoid(a + epsilon)
+    assert sigmoid(a - epsilon) <= sigmoid(a)
+
+
+@pytest.mark.task0_2
+@given(ordered_triplets())
+def test_transitive(triplets: Tuple) -> None:
+    """Test the transitive property of less-than (a < b and b < c implies a < c)"""
+    a, b, c = triplets
+    assert lt(a, b) == 1.0
+    assert lt(b, c) == 1.0
+    assert lt(a, c) == 1.0
+
+
+@pytest.mark.task0_2
+@given(small_floats, small_floats)
+def test_symmetric(a: float, b: float) -> None:
+    """Write a test that ensures that :func:`minitorch.operators.mul` is symmetric, i.e.
+    gives the same value regardless of the order of its input.
+    """
+    # mul
+    assert_close(mul(a, b), mul(b, a))
+    # add
+    assert_close(add(a, b), add(b, a))
+    # eq
+    assert_close(eq(a, b), eq(b, a))
+    # max
+    assert_close(max(a, b), max(b, a))
+    # is_close
+    assert_close(is_close(a, b), is_close(b, a))
 
 
 @pytest.mark.task0_2
 @given(small_floats, small_floats, small_floats)
-def test_transitive(a: float, b: float, c: float) -> None:
-    "Test the transitive property of less-than (a < b and b < c implies a < c)"
-    raise NotImplementedError("Need to include this file from past assignment.")
-
-
-@pytest.mark.task0_2
-def test_symmetric() -> None:
-    """
-    Write a test that ensures that :func:`minitorch.operators.mul` is symmetric, i.e.
-    gives the same value regardless of the order of its input.
-    """
-    raise NotImplementedError("Need to include this file from past assignment.")
-
-
-@pytest.mark.task0_2
-def test_distribute() -> None:
-    r"""
-    Write a test that ensures that your operators distribute, i.e.
+def test_distribute(a: float, b: float, c: float) -> None:
+    r"""Write a test that ensures that your operators distribute, i.e.
     :math:`z \times (x + y) = z \times x + z \times y`
     """
-    raise NotImplementedError("Need to include this file from past assignment.")
+    # add + mul
+    assert_close(mul(c, add(a, b)), add(mul(c, a), mul(c, b)))
 
 
 @pytest.mark.task0_2
 def test_other() -> None:
-    """
-    Write a test that ensures some other property holds for your functions.
-    """
-    raise NotImplementedError("Need to include this file from past assignment.")
+    """Write a test that ensures some other property holds for your functions."""
+    pass
 
 
 # ## Task 0.3  - Higher-order functions
@@ -164,17 +220,18 @@ def test_zip_with(a: float, b: float, c: float, d: float) -> None:
     lists(small_floats, min_size=5, max_size=5),
 )
 def test_sum_distribute(ls1: List[float], ls2: List[float]) -> None:
-    """
-    Write a test that ensures that the sum of `ls1` plus the sum of `ls2`
+    """Write a test that ensures that the sum of `ls1` plus the sum of `ls2`
     is the same as the sum of each element of `ls1` plus each element of `ls2`.
     """
-    raise NotImplementedError("Need to include this file from past assignment.")
+    sum1 = sum0(ls1) + sum0(ls2)
+    sum2 = sum0(addLists(ls1, ls2))
+    assert_close(sum1, sum2)
 
 
 @pytest.mark.task0_3
 @given(lists(small_floats))
 def test_sum(ls: List[float]) -> None:
-    assert_close(sum(ls), sum(ls))
+    assert_close(sum(ls), sum0(ls))
 
 
 @pytest.mark.task0_3
@@ -189,6 +246,9 @@ def test_negList(ls: List[float]) -> None:
     check = negList(ls)
     for i, j in zip(ls, check):
         assert_close(i, -j)
+    check = negList(check)
+    for i, j in zip(ls, check):
+        assert i == j
 
 
 # ## Generic mathematical tests
